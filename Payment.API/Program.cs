@@ -13,6 +13,7 @@ builder.Services.AddMassTransit(configurator =>
         _configure.ReceiveEndpoint(RabbitMQSettings.Payment_StockReservedEventQueue, e => e.ConfigureConsumer<StockReservedEventConsumer>(context));
     });
 });
+ 
 
 var app = builder.Build();
 
