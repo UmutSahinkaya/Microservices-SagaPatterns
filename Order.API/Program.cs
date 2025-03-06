@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Order.API.Consumers;
 using Order.API.Models.Context;
 using Order.API.ViewModels;
 using Shared;
@@ -13,9 +14,14 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddMassTransit(configurator =>
 {
+    
+    configurator.AddConsumer<PaymentCompletedEventConsumer>();
+    configurator.AddConsumer<PaymentFailedEventConsumer>();
     configurator.UsingRabbitMq((context, _configure) =>
     {
         _configure.Host(builder.Configuration["RabbitMQ"]);
+        _configure.ReceiveEndpoint(RabbitMQSettings.Order_PaymentCompletedEventQueue, e => e.ConfigureConsumer<PaymentCompletedEventConsumer>(context));
+        _configure.ReceiveEndpoint(RabbitMQSettings.Order_PaymentFailedEventQueue, e => e.ConfigureConsumer<PaymentFailedEventConsumer>(context));
     });
 });
 
@@ -30,7 +36,7 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.MapPost("/create-order", async (CreateOrderVM model,OrderAPIDbContext context,IPublishEndpoint _publishEndpoint) =>
+app.MapPost("/create-order", async (CreateOrderVM model, OrderAPIDbContext context, IPublishEndpoint _publishEndpoint) =>
 {
     Order.API.Models.Order order = new()
     {
@@ -41,11 +47,11 @@ app.MapPost("/create-order", async (CreateOrderVM model,OrderAPIDbContext contex
             Price = oi.Price,
             ProductId = Guid.Parse(oi.ProductId)
         }).ToList(),
-        Statu=Order.API.Models.OrderStatus.Suspend,
+        Statu = Order.API.Models.OrderStatus.Suspend,
         CreatedDate = DateTime.UtcNow,
-        TotalPrice=model.OrderItems.Sum(oi => oi.Price*oi.Count),
+        TotalPrice = model.OrderItems.Sum(oi => oi.Price * oi.Count),
     };
-   await context.Orders.AddAsync(order);
+    await context.Orders.AddAsync(order);
     await context.SaveChangesAsync();
     OrderCreatedEvent orderCreatedEvent = new()
     {
@@ -54,9 +60,9 @@ app.MapPost("/create-order", async (CreateOrderVM model,OrderAPIDbContext contex
         TotalPrice = order.TotalPrice,
         OrderItems = order.OrderItems.Select(oi => new OrderItemMessage()
         {
-            Count=oi.Count,
-            Price=oi.Price,
-            ProductId=oi.ProductId
+            Count = oi.Count,
+            Price = oi.Price,
+            ProductId = oi.ProductId
         }).ToList()
     };
     await _publishEndpoint.Publish(orderCreatedEvent);
