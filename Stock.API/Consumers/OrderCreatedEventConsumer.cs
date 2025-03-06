@@ -1,11 +1,12 @@
 ﻿using MassTransit;
 using MongoDB.Driver;
+using Shared;
 using Shared.Events;
 using Stock.API.Services;
 
 namespace Stock.API.Consumers
 {
-    public class OrderCreatedEventConsumer(MongoDBService _mongoDbService) : IConsumer<OrderCreatedEvent>
+    public class OrderCreatedEventConsumer(MongoDBService _mongoDbService,ISendEndpointProvider _sendEndpointProvider,IPublishEndpoint _publishEndpoint) : IConsumer<OrderCreatedEvent>
     { 
         public async Task Consume(ConsumeContext<OrderCreatedEvent> context)
         {
@@ -27,12 +28,28 @@ namespace Stock.API.Consumers
                 }
 
                 //Payment uyarılacak event fırlatılması
-
+                var sendEndpoint = await _sendEndpointProvider.GetSendEndpoint(new Uri($"queue:{RabbitMQSettings.Payment_StockReservedEventQueue}"));
+                StockReservedEvent stockReservedEvent = new()
+                {
+                    BuyerId=context.Message.BuyerId,
+                    OrderId=context.Message.OrderId,
+                    TotalPrice=context.Message.TotalPrice,
+                    OrderItems=context.Message.OrderItems
+                };
+                await sendEndpoint.Send(stockReservedEvent);
+                
             }
             else
             {
-                //Stock işlemi Başarısız
+                //Stock işlemi Başarısız...
                 //Order'ı Uyaracak eventini at.
+                StockNotReservedEvent stockNotReservedEvent = new()
+                {
+                    BuyerId = context.Message.BuyerId,
+                    OrderId = context.Message.OrderId,
+                    Message = "Stock miktarı yetersiz..."
+                };
+                await _publishEndpoint.Publish(stockNotReservedEvent);
             }
 
         }
