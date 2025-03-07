@@ -2,10 +2,10 @@
 
 public class Order
 {
-    public Guid Id { get; set; }
-    public Guid BuyerId { get; set; }
-    public List<OrderItem> OrderItems { get; set; }
-    public OrderStatus Statu { get; set; }
+    public int Id { get; set; }
+    public int BuyerId { get; set; }
+    public ICollection<OrderItem> OrderItems { get; set; }
+    public OrderStatus Status { get; set; }
     public DateTime CreatedDate { get; set; }
     public decimal TotalPrice { get; set; }
 }
