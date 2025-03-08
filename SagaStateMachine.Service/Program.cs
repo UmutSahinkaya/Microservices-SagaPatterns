@@ -14,7 +14,7 @@ builder.Services.AddMassTransit(configurator =>
         opt.AddDbContext<DbContext, OrderStateDbContext>((provider, _builder) =>
         {
             _builder.UseSqlServer(builder.Configuration.GetConnectionString("MSSQLServer"));
-        })
+        });
     });
     configurator.UsingRabbitMq((context, _configure) =>
     {
