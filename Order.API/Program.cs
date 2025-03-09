@@ -1,11 +1,12 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Order.API.Consumers;
+using Order.API.Models;
 using Order.API.Models.Context;
 using Order.API.ViewModels;
 using Shared;
-using Shared.Events;
 using Shared.Messages;
+using Shared.OrderEvents;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,15 +15,13 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddMassTransit(configurator =>
 {
-    configurator.AddConsumer<StockNotReservedEventConsumer>();
-    configurator.AddConsumer<PaymentCompletedEventConsumer>();
-    configurator.AddConsumer<PaymentFailedEventConsumer>();
+    configurator.AddConsumer<OrderCompletedEventConsumer>();
+    configurator.AddConsumer<OrderFailedEventConsumer>();
     configurator.UsingRabbitMq((context, _configure) =>
     {
         _configure.Host(builder.Configuration["RabbitMQ"]);
-        _configure.ReceiveEndpoint(RabbitMQSettings.Order_PaymentCompletedEventQueue, e => e.ConfigureConsumer<PaymentCompletedEventConsumer>(context));
-        _configure.ReceiveEndpoint(RabbitMQSettings.Order_PaymentFailedEventQueue, e => e.ConfigureConsumer<PaymentFailedEventConsumer>(context));
-        _configure.ReceiveEndpoint(RabbitMQSettings.Order_StockNotReservedEventQueue, e => e.ConfigureConsumer<StockNotReservedEventConsumer>(context));
+        _configure.ReceiveEndpoint(RabbitMQSettings.Order_OrderCompletedEventQueue, e => e.ConfigureConsumer<OrderCompletedEventConsumer>(context));
+        _configure.ReceiveEndpoint(RabbitMQSettings.Order_OrderFailedEventQueue, e => e.ConfigureConsumer<OrderFailedEventConsumer>(context));
     });
 });
 
@@ -37,36 +36,38 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.MapPost("/create-order", async (CreateOrderVM model, OrderAPIDbContext context, IPublishEndpoint _publishEndpoint) =>
+app.MapPost("/create-order", async (OrderVM model,OrderAPIDbContext _context,ISendEndpointProvider sendEndpointProvider) =>
 {
     Order.API.Models.Order order = new()
     {
-        BuyerId = Guid.TryParse(model.BuyerId, out Guid _buyerId) ? _buyerId : Guid.NewGuid(),
-        OrderItems = model.OrderItems.Select(oi => new Order.API.Models.OrderItem()
-        {
-            Count = oi.Count,
-            Price = oi.Price,
-            ProductId = Guid.Parse(oi.ProductId)
-        }).ToList(),
-        Statu = Order.API.Models.OrderStatus.Suspend,
+        BuyerId = model.BuyerId,
         CreatedDate = DateTime.UtcNow,
-        TotalPrice = model.OrderItems.Sum(oi => oi.Price * oi.Count),
-    };
-    await context.Orders.AddAsync(order);
-    await context.SaveChangesAsync();
-    OrderCreatedEvent orderCreatedEvent = new()
-    {
-        BuyerId = order.BuyerId,
-        OrderId = order.Id,
-        TotalPrice = order.TotalPrice,
-        OrderItems = order.OrderItems.Select(oi => new OrderItemMessage()
+        Status = OrderStatus.Suspend,
+        TotalPrice = model.OrderItems.Sum(x => x.Price * x.Count),
+        OrderItems = model.OrderItems.Select(oi => new OrderItem
         {
-            Count = oi.Count,
-            Price = oi.Price,
-            ProductId = oi.ProductId
+            Price= oi.Price,
+            Count=oi.Count,
+            ProductId=oi.ProductId
         }).ToList()
     };
-    await _publishEndpoint.Publish(orderCreatedEvent);
+
+    await _context.Orders.AddAsync(order);
+    await _context.SaveChangesAsync();
+    OrderStartedEvent orderStartedEvent = new()
+    {
+        BuyerId = model.BuyerId,
+        OrderId = order.Id,
+        TotalPrice = order.TotalPrice,
+        OrderItems = order.OrderItems.Select(oi => new OrderItemMessage
+        {
+            Price = oi.Price,
+            Count = oi.Count,
+            ProductId = oi.ProductId
+        }).ToList(),
+    };
+    var sendEndpoint=await sendEndpointProvider.GetSendEndpoint(new Uri($"queue:{RabbitMQSettings.StateMachineQueue}"));
+    await sendEndpoint.Send<OrderStartedEvent>(orderStartedEvent);
 });
 
 

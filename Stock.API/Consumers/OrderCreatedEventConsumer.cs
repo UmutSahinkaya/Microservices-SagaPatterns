@@ -1,57 +1,46 @@
 ﻿using MassTransit;
 using MongoDB.Driver;
 using Shared;
-using Shared.Events;
+using Shared.OrderEvents;
+using Shared.StockEvents;
 using Stock.API.Services;
 
-namespace Stock.API.Consumers
-{
-    public class OrderCreatedEventConsumer(MongoDBService _mongoDbService,ISendEndpointProvider _sendEndpointProvider,IPublishEndpoint _publishEndpoint) : IConsumer<OrderCreatedEvent>
-    { 
-        public async Task Consume(ConsumeContext<OrderCreatedEvent> context)
-        {
-            List<bool> StockResult = new();
-            IMongoCollection<Models.Stock> collection=_mongoDbService.GetCollection<Models.Stock>();
+namespace Stock.API.Consumers;
 
+public class OrderCreatedEventConsumer(MongoDBService mongoDBService,ISendEndpointProvider sendEndpointProvider) : IConsumer<OrderCreatedEvent>
+{
+    public async Task Consume(ConsumeContext<OrderCreatedEvent> context)
+    {
+        List<bool> stockResults = new();
+        var stockCollection = mongoDBService.GetCollection<Models.Stock>();
+
+        foreach (var orderItem in context.Message.OrderItems)
+            stockResults.Add(await (await stockCollection.FindAsync(x => x.ProductId == orderItem.ProductId && x.Count >= orderItem.Count)).AnyAsync());
+        var sendEndpoint = await sendEndpointProvider.GetSendEndpoint(new Uri($"queue:{RabbitMQSettings.StateMachineQueue}"));
+
+        if (stockResults.TrueForAll(x => x.Equals(true)))
+        {
             foreach(var orderItem in context.Message.OrderItems)
             {
-                StockResult.Add(await(await collection.FindAsync(s=>s.ProductId==orderItem.ProductId && s.Count >= orderItem.Count)).AnyAsync());
-            }
-            if (StockResult.TrueForAll(s=>s.Equals(true)))
-            {
-                //Stock Güncellemesi
-                foreach(var orderItem in context.Message.OrderItems)
-                {
-                    Models.Stock stock = await (await collection.FindAsync(s => s.ProductId == orderItem.ProductId)).FirstOrDefaultAsync();
-                    stock.Count-=orderItem.Count;
-                    await collection.FindOneAndReplaceAsync(x=>x.ProductId==orderItem.ProductId,stock);
-                }
+                var stock = await(await stockCollection.FindAsync(x => x.ProductId == orderItem.ProductId)).FirstOrDefaultAsync();
+                stock.Count -= orderItem.Count;
 
-                //Payment uyarılacak event fırlatılması
-                var sendEndpoint = await _sendEndpointProvider.GetSendEndpoint(new Uri($"queue:{RabbitMQSettings.Payment_StockReservedEventQueue}"));
-                StockReservedEvent stockReservedEvent = new()
-                {
-                    BuyerId=context.Message.BuyerId,
-                    OrderId=context.Message.OrderId,
-                    TotalPrice=context.Message.TotalPrice,
-                    OrderItems=context.Message.OrderItems
-                };
-                await sendEndpoint.Send(stockReservedEvent);
-                
+                await stockCollection.FindOneAndReplaceAsync(x => x.ProductId == orderItem.ProductId, stock);
             }
-            else
+            StockReservedEvent stockReservedEvent = new(context.Message.CorrelationId)
             {
-                //Stock işlemi Başarısız...
-                //Order'ı Uyaracak eventini at.
-                StockNotReservedEvent stockNotReservedEvent = new()
-                {
-                    BuyerId = context.Message.BuyerId,
-                    OrderId = context.Message.OrderId,
-                    Message = "Stock miktarı yetersiz..."
-                };
-                await _publishEndpoint.Publish(stockNotReservedEvent);
-            }
+                OrderItems = context.Message.OrderItems
+            };
 
+            await sendEndpoint.Send(stockReservedEvent);
+        }
+        else
+        {
+            StockNotReservedEvent stockNotReservedEvent = new(context.Message.CorrelationId)
+            {
+                Message = "Stock yetersiz."
+            };
+            await sendEndpoint.Send(stockNotReservedEvent);
         }
     }
 }
