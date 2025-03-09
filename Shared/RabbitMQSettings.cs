@@ -6,7 +6,7 @@ public static class RabbitMQSettings
     public const string Stock_OrderCreatedEventQueue = "stock-order-created-event-queue";
     public const string Order_OrderCompletedEventQueue = "order-order-completed-event-queue";
     public const string Order_OrderFailedEventQueue = "order-order-failed-event-queue";
-    public const string Stock_RollbackMessageEventQueue = "stock-rollback-message-event-queue";
+    public const string Stock_RollbackMessageQueue = "stock-rollback-message-queue";
 
     public const string Payment_StartedEventQueue = "payment-started-event-queue";
     //public const string Order_PaymentCompletedEventQueue = "order-payment-completed-event-queue";
