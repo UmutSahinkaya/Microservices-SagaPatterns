@@ -6,19 +6,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddMassTransit(configurator =>
 {
+    configurator.AddConsumer<PaymentStartedEventConsumer>(); // Consumer burada eklenmeli
+
     configurator.UsingRabbitMq((context, _configure) =>
     {
-        configurator.AddConsumer<PaymentStartedEventConsumer>();
-        configurator.UsingRabbitMq((context, _configure) =>
+        _configure.Host(builder.Configuration["RabbitMQ"]);
+        _configure.ReceiveEndpoint(RabbitMQSettings.Payment_StartedEventQueue, e =>
         {
-            _configure.Host(builder.Configuration["RabbitMQ"]);
-            _configure.ReceiveEndpoint(RabbitMQSettings.Payment_StartedEventQueue, e => e.ConfigureConsumer<PaymentStartedEventConsumer>(context));
+            e.ConfigureConsumer<PaymentStartedEventConsumer>(context);
         });
     });
 });
- 
 
 var app = builder.Build();
-
 
 app.Run();
